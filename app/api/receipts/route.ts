@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, getSessionUser } from "@/lib/supabase/server";
 import {
   RECEIPTS_BUCKET,
-  decodeDataUrl,
   imagePathFor,
   listReceipts,
   newReceiptToRow,
@@ -10,6 +9,7 @@ import {
   parseNewReceipt,
   rowToReceipt,
 } from "@/lib/receipts";
+import { readJsonBody } from "@/lib/requestBody";
 import type { ReceiptRow } from "@/types";
 
 /** GET /api/receipts — one keyset-paginated page of the ledger. */
@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
 
   const supabase = await createClient();
 
-  const parsed = parseNewReceipt(await req.json().catch(() => null));
+  const body = await readJsonBody(req);
+  if ("error" in body) return NextResponse.json({ error: body.error }, { status: body.status });
+
+  const parsed = parseNewReceipt(body.json);
   if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const input = parsed.input;
 
@@ -46,14 +49,13 @@ export async function POST(req: NextRequest) {
   // Image first, row second. A failed insert leaves an orphaned object, which
   // nothing references and nobody sees. The reverse — a row pointing at an
   // image that was never uploaded — is a visibly broken receipt.
-  if (input.imageDataUrl) {
-    const decoded = decodeDataUrl(input.imageDataUrl);
-    if (!decoded) return NextResponse.json({ error: "Invalid image data" }, { status: 400 });
+  if (input.image) {
+    const { bytes, contentType } = input.image;
 
-    imagePath = imagePathFor(user.id, id, decoded.contentType);
+    imagePath = imagePathFor(user.id, id, contentType);
     const { error: uploadError } = await supabase.storage
       .from(RECEIPTS_BUCKET)
-      .upload(imagePath, decoded.bytes, { contentType: decoded.contentType, upsert: true });
+      .upload(imagePath, bytes, { contentType, upsert: true });
 
     if (uploadError) {
       console.error("Receipt image upload failed:", uploadError);
