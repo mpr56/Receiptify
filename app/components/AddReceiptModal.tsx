@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Receipt, ProductCategory } from "@/types";
 import { CATEGORIES } from "@/lib/data";
 import { processReceiptImage } from "@/lib/imageProcessor";
+import { PICKER_ACCEPT } from "@/lib/imageLimits";
 import { scanReceipt, OCRResult } from "@/lib/ocr";
 import { T, MONO, seg, fieldStyle, labelStyle, fmtMoney, fmtAmt, gstOf } from "./theme";
 import { DashRule, DoubleRule, DotRow, MetaLine, PerfLine } from "./paper";
@@ -289,7 +290,7 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
             <input
               ref={cameraRef}
               type="file"
-              accept="image/*"
+              accept={PICKER_ACCEPT}
               capture="environment"
               hidden
               onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])}
@@ -325,7 +326,7 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              accept={PICKER_ACCEPT}
               hidden
               onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])}
             />

@@ -1,19 +1,8 @@
 import { ProductCategory } from "@/types";
+import { parseOcrResult, type ScannedReceipt } from "@/lib/ocrSchema";
 
-export interface OCRResult {
-  storeName: string;
-  date: string;
-  time: string;
-  totalAmount: number;
-  paymentMethod: "card" | "cash" | "digital";
-  items: { name: string; quantity: number; unitPrice: number }[];
+export interface OCRResult extends ScannedReceipt {
   category: ProductCategory;
-  confidence: {
-    storeName: number;
-    date: number;
-    total: number;
-    items: number;
-  };
 }
 
 // --- Category inference -------------------------------------------------------
@@ -57,31 +46,13 @@ export async function scanReceipt(
     throw new Error(err.error ?? "Scan failed");
   }
 
-  const data = await response.json();
-
   onProgress?.(92, "Structuring data…");
 
-  const category = inferCategory(data.storeName ?? "");
+  // The route already clamps this; running it again costs nothing and means the
+  // shape holds even if this function is ever pointed at another endpoint.
+  const parsed = parseOcrResult(await response.json());
 
   onProgress?.(100, "Done");
 
-  return {
-    storeName: data.storeName ?? "",
-    date: data.date ?? "",
-    time: data.time ?? "",
-    totalAmount: typeof data.totalAmount === "number" ? data.totalAmount : 0,
-    paymentMethod: data.paymentMethod ?? "card",
-    items: (data.items ?? []).map((item: { name: string; quantity: number; unitPrice: number }) => ({
-      name: item.name ?? "",
-      quantity: item.quantity ?? 1,
-      unitPrice: item.unitPrice ?? 0,
-    })),
-    category,
-    confidence: {
-      storeName: data.confidence?.storeName ?? 0,
-      date: data.confidence?.date ?? 0,
-      total: data.confidence?.total ?? 0,
-      items: data.confidence?.items ?? 0,
-    },
-  };
+  return { ...parsed, category: inferCategory(parsed.storeName) };
 }

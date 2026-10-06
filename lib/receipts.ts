@@ -9,8 +9,28 @@ import {
   SortField,
 } from "@/types";
 import { CATEGORIES, getStoreColor, getInitials } from "@/lib/data";
+import { parseImageDataUrl, type ValidatedImage } from "@/lib/imageValidation";
+import {
+  cleanAmount,
+  cleanString,
+  MAX_ITEMS,
+  MAX_ITEM_NAME_CHARS,
+  MAX_ITEM_QUANTITY,
+  MAX_STORE_NAME_CHARS,
+} from "@/lib/ocrSchema";
 
 export const PAGE_SIZE = 50;
+
+/**
+ * Write-side bounds. The scan route already clamps what the model returns, but
+ * this endpoint is callable on its own, so it enforces the same limits rather
+ * than assuming a body came from our own client.
+ */
+export const MAX_TAGS = 20;
+export const MAX_TAG_CHARS = 40;
+export const MAX_NOTES_CHARS = 2_000;
+
+const CURRENCY_CODE = /^[A-Za-z]{3}$/;
 
 const PAYMENT_METHODS = ["cash", "card", "digital"] as const;
 const SORT_FIELDS: SortField[] = ["date", "amount", "store"];
@@ -168,8 +188,11 @@ export interface NewReceiptInput {
   items: ReceiptItem[];
   tags: string[];
   notes?: string;
-  /** Transient: uploaded to storage, never written to the row. */
-  imageDataUrl?: string;
+  /**
+   * Transient: uploaded to storage, never written to the row. Already decoded
+   * and type-checked, so callers never re-parse a caller-supplied data URL.
+   */
+  image?: ValidatedImage;
 }
 
 /**
@@ -180,7 +203,7 @@ export function parseNewReceipt(body: unknown): { input: NewReceiptInput } | { e
   if (typeof body !== "object" || body === null) return { error: "Expected an object" };
   const b = body as Record<string, unknown>;
 
-  const storeName = typeof b.storeName === "string" ? b.storeName.trim() : "";
+  const storeName = cleanString(b.storeName, MAX_STORE_NAME_CHARS);
   if (!storeName) return { error: "storeName is required" };
 
   const date = typeof b.date === "string" ? b.date : "";
@@ -197,50 +220,64 @@ export function parseNewReceipt(body: unknown): { input: NewReceiptInput } | { e
   const items: ReceiptItem[] = Array.isArray(b.items)
     ? b.items
         .filter((i): i is Record<string, unknown> => typeof i === "object" && i !== null)
+        .slice(0, MAX_ITEMS)
         .map((i) => {
-          const quantity = Number(i.quantity) || 0;
-          const unitPrice = Number(i.unitPrice) || 0;
+          const rawQuantity = Number(i.quantity);
+          const quantity = Number.isFinite(rawQuantity)
+            ? Math.min(MAX_ITEM_QUANTITY, Math.max(0, Math.round(rawQuantity)))
+            : 0;
+          const unitPrice = cleanAmount(Number(i.unitPrice));
+          const totalPrice = Number(i.totalPrice);
           return {
-            name: String(i.name ?? "").trim(),
+            name: cleanString(i.name, MAX_ITEM_NAME_CHARS),
             quantity,
             unitPrice,
-            totalPrice: Number(i.totalPrice) || round2(quantity * unitPrice),
+            totalPrice: Number.isFinite(totalPrice) && totalPrice !== 0
+              ? cleanAmount(totalPrice)
+              : cleanAmount(quantity * unitPrice),
           };
         })
         .filter((i) => i.name)
     : [];
 
-  const totalAmount = Number(b.totalAmount);
-  if (!Number.isFinite(totalAmount) || totalAmount < 0) return { error: "totalAmount must be a number" };
+  const rawTotal = Number(b.totalAmount);
+  if (!Number.isFinite(rawTotal) || rawTotal < 0) return { error: "totalAmount must be a number" };
 
-  const imageDataUrl = typeof b.imageDataUrl === "string" ? b.imageDataUrl : undefined;
-  if (imageDataUrl && !DATA_URL.test(imageDataUrl)) return { error: "imageDataUrl is not a data URL" };
+  // Decoded here rather than in the route, so the bytes are validated once and
+  // the caller never sees an unchecked data URL.
+  let image: ValidatedImage | undefined;
+  if (b.imageDataUrl !== undefined && b.imageDataUrl !== null) {
+    const parsedImage = parseImageDataUrl(b.imageDataUrl);
+    if ("error" in parsedImage) return { error: parsedImage.error };
+    image = parsedImage;
+  }
+
+  const currency =
+    typeof b.currency === "string" && CURRENCY_CODE.test(b.currency)
+      ? b.currency.toUpperCase()
+      : "AUD";
+
+  const notes = cleanString(b.notes, MAX_NOTES_CHARS);
 
   return {
     input: {
       storeName,
       category,
       date,
-      totalAmount: round2(totalAmount),
-      currency: typeof b.currency === "string" && b.currency ? b.currency : "AUD",
+      totalAmount: cleanAmount(rawTotal),
+      currency,
       paymentMethod,
       items,
-      tags: Array.isArray(b.tags) ? b.tags.map((t) => String(t).trim()).filter(Boolean) : [],
-      notes: typeof b.notes === "string" && b.notes.trim() ? b.notes.trim() : undefined,
-      imageDataUrl,
+      tags: Array.isArray(b.tags)
+        ? b.tags
+            .map((t) => cleanString(t, MAX_TAG_CHARS))
+            .filter(Boolean)
+            .slice(0, MAX_TAGS)
+        : [],
+      notes: notes || undefined,
+      image,
     },
   };
-}
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
-const DATA_URL = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
-
-/** Splits a base64 data URL into bytes and content type for the storage upload. */
-export function decodeDataUrl(dataUrl: string): { bytes: Buffer; contentType: string } | null {
-  const match = dataUrl.match(DATA_URL);
-  if (!match) return null;
-  return { contentType: match[1], bytes: Buffer.from(match[2], "base64") };
 }
 
 export function newReceiptToRow(input: NewReceiptInput, userId: string, id: string, imagePath: string | null) {

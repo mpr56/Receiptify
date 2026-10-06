@@ -5,6 +5,8 @@
  * - Compresses to JPEG targeting ~150KB
  */
 
+import { checkUploadFile } from "@/lib/imageLimits";
+
 const RECEIPT_ASPECT = 3 / 7; // width / height, typical receipt
 const MAX_HEIGHT = 1800;        // px, enough for Tesseract, not overkill
 const JPEG_QUALITY = 0.55;      // ~150KB for a 1080px-wide greyscale JPEG
@@ -28,6 +30,11 @@ function toGreyscale(ctx: CanvasRenderingContext2D, w: number, h: number) {
 }
 
 export async function processReceiptImage(file: File): Promise<ProcessedImage> {
+  // Screened before any decoding work, so an unusable file fails immediately
+  // with something readable. The server re-checks; this is only for the user.
+  const rejection = checkUploadFile(file);
+  if (rejection) throw new Error(rejection);
+
   const originalSizeKB = Math.round(file.size / 1024);
 
   return new Promise((resolve, reject) => {
