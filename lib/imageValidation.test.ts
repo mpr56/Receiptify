@@ -76,7 +76,11 @@ describe("parseImageDataUrl", () => {
     const exact = Buffer.concat([JPEG, Buffer.alloc(MAX_IMAGE_BYTES - JPEG.length, 0x41)]);
     const result = parseImageDataUrl(dataUrl("image/jpeg", exact));
 
-    expect(result).toEqual({ contentType: "image/jpeg", bytes: exact });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.contentType).toBe("image/jpeg");
+    // Not toEqual: it walks all 5 MiB element by element, which takes seconds
+    // and times out on CI runners. Buffer.equals is a single memcmp.
+    expect(result.bytes.equals(exact)).toBe(true);
   });
 
   test("rejects a string that is not a data URL", () => {
