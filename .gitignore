@@ -11,3 +11,6 @@ npm-debug.log*
 .DS_Store
 *.pem
 tsconfig.tsbuildinfo
+
+# Vercel CLI project link, recreated by `vercel pull`
+.vercel
