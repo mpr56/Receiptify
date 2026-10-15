@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
+import { jpegOfSize, RECEIPT_SIZE } from "./__fixtures__/images";
 import { MAX_ITEMS, MAX_ITEM_NAME_CHARS, MAX_RECEIPT_AMOUNT, MAX_STORE_NAME_CHARS } from "./ocrSchema";
 import { MAX_NOTES_CHARS, MAX_TAGS, MAX_TAG_CHARS, parseNewReceipt } from "./receipts";
 
-const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+const JPEG_BYTES = jpegOfSize(RECEIPT_SIZE.width, RECEIPT_SIZE.height);
 const JPEG_DATA_URL = `data:image/jpeg;base64,${JPEG_BYTES.toString("base64")}`;
 
 const VALID = {

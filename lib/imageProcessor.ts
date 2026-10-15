@@ -5,7 +5,7 @@
  * - Compresses to JPEG targeting ~150KB
  */
 
-import { checkUploadFile } from "@/lib/imageLimits";
+import { checkImageDimensions, checkUploadFile, MAX_SOURCE_PIXELS } from "@/lib/imageLimits";
 
 const RECEIPT_ASPECT = 3 / 7; // width / height, typical receipt
 const MAX_HEIGHT = 1800;        // px, enough for Tesseract, not overkill
@@ -47,6 +47,14 @@ export async function processReceiptImage(file: File): Promise<ProcessedImage> {
       const srcW = img.naturalWidth;
       const srcH = img.naturalHeight;
 
+      // The source is scaled down below, so only the pixel count bounds it here.
+      // The server checks the output against the full set of limits.
+      const sizeRejection = checkImageDimensions(srcW, srcH, {
+        maxSide: Infinity,
+        maxPixels: MAX_SOURCE_PIXELS,
+      });
+      if (sizeRejection) return reject(new Error(sizeRejection));
+
       // --- Determine crop ---
       // If image is already portrait-ish, just constrain height.
       // If it's landscape (photo taken sideways), rotate by cropping center column.
@@ -64,6 +72,11 @@ export async function processReceiptImage(file: File): Promise<ProcessedImage> {
       const scale = Math.min(1, MAX_HEIGHT / cropH);
       const outW = Math.round(cropW * scale);
       const outH = Math.round(cropH * scale);
+
+      // The landscape crop can narrow a borderline photo past the floor, so
+      // the output is checked too, against the same rules the server applies.
+      const outRejection = checkImageDimensions(outW, outH);
+      if (outRejection) return reject(new Error(outRejection));
 
       const canvas = document.createElement("canvas");
       canvas.width = outW;

@@ -16,7 +16,10 @@ export const MAX_ITEMS = 100;
 export const MAX_RECEIPT_AMOUNT = 1_000_000;
 export const MAX_ITEM_QUANTITY = 10_000;
 
-const PAYMENT_METHODS = ["card", "cash", "digital"] as const;
+/** Error code `/api/scan` sends when the image is not a receipt. */
+export const NOT_A_RECEIPT = "not_a_receipt";
+
+const PAYMENT_METHODS =["card", "cash", "digital"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -84,6 +87,19 @@ function cleanItems(value: unknown): ScannedItem[] {
       };
     })
     .filter((item) => item.name);
+}
+
+/**
+ * The model's verdict on whether the image is a receipt at all. Only a literal
+ * `true` counts: a missing, malformed or hedged answer is treated as "no", so a
+ * reply that forgot the field cannot wave a non-receipt through.
+ *
+ * This catches honest mistakes, such as a selfie or a screenshot of the wrong
+ * thing. It is not a security control: text in the image can steer it like any
+ * other field, and a user can always key a receipt in by hand.
+ */
+export function isReceiptVerdict(raw: unknown): boolean {
+  return typeof raw === "object" && raw !== null && (raw as Record<string, unknown>).isReceipt === true;
 }
 
 /**
