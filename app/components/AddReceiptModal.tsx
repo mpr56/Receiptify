@@ -5,7 +5,7 @@ import { Receipt, ProductCategory } from "@/types";
 import { CATEGORIES } from "@/lib/data";
 import { processReceiptImage } from "@/lib/imageProcessor";
 import { PICKER_ACCEPT } from "@/lib/imageLimits";
-import { scanReceipt, OCRResult } from "@/lib/ocr";
+import { scanReceipt, NotAReceiptError, OCRResult } from "@/lib/ocr";
 import { T, MONO, seg, fieldStyle, labelStyle, fmtMoney, fmtAmt, gstOf } from "./theme";
 import { DashRule, DoubleRule, DotRow, MetaLine, PerfLine } from "./paper";
 import { Camera, Upload, Trash2, AlertCircle, Sparkles } from "lucide-react";
@@ -81,6 +81,7 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
   const [compressedKB, setCompressedKB] = useState<{ original: number; compressed: number } | null>(null);
   const [scanProgress, setScanProgress] = useState({ pct: 0, status: "" });
   const [scanError, setScanError] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [ocr, setOcr] = useState<OCRResult | null>(null);
 
   const [storeName, setStoreName] = useState("");
@@ -107,11 +108,14 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
   const handleImageFile = useCallback(async (file: File) => {
     setStep("scanning");
     setScanError(null);
+    setPhotoError(null);
     setScanProgress({ pct: 2, status: "Processing image…" });
 
+    let imageReady = false;
     try {
       const processed = await processReceiptImage(file);
       setImageDataUrl(processed.dataUrl);
+      imageReady = true;
       setCompressedKB({ original: processed.originalSizeKB, compressed: processed.compressedSizeKB });
       setScanProgress({ pct: 8, status: "Image ready, scanning…" });
 
@@ -129,6 +133,15 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
       setStep("details");
     } catch (err) {
       console.error("Scan failed:", err);
+      // A rejected photo or a non-receipt goes back to the picker. Manual entry
+      // only makes sense when the image is fine and the scan itself failed.
+      if (err instanceof NotAReceiptError || !imageReady) {
+        setImageDataUrl(undefined);
+        setCompressedKB(null);
+        setPhotoError(err instanceof Error ? err.message : "Could not use that image.");
+        setStep("photo");
+        return;
+      }
       setScanError(err instanceof Error ? err.message : "Scan failed");
       setStep("details");
     }
@@ -287,13 +300,39 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
               PRESENT RECEIPT TO SCANNER
             </MetaLine>
 
+            {photoError && (
+              <div
+                role="alert"
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  padding: "10px 12px",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: "oklch(60% 0.14 25)",
+                  color: "oklch(40% 0.12 25)",
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  letterSpacing: "0.04em",
+                }}
+              >
+                <AlertCircle size={13} aria-hidden style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>IMAGE REJECTED. {photoError.toUpperCase()}</span>
+              </div>
+            )}
+
             <input
               ref={cameraRef}
               type="file"
               accept={PICKER_ACCEPT}
               capture="environment"
               hidden
-              onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) handleImageFile(file);
+              }}
             />
             <button
               onClick={() => cameraRef.current?.click()}
@@ -328,7 +367,11 @@ export default function AddReceiptModal({ onAdd, onClose }: Props) {
               type="file"
               accept={PICKER_ACCEPT}
               hidden
-              onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) handleImageFile(file);
+              }}
             />
             <button
               onClick={() => fileRef.current?.click()}

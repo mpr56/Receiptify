@@ -6,7 +6,12 @@
  * re-derive a content type from a caller-supplied string.
  */
 
-import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, type AllowedImageType } from "@/lib/imageLimits";
+import {
+  ALLOWED_IMAGE_TYPES,
+  checkImageDimensions,
+  MAX_IMAGE_BYTES,
+  type AllowedImageType,
+} from "@/lib/imageLimits";
 
 export { ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES };
 export type { AllowedImageType };
@@ -56,6 +61,71 @@ function sniffImageType(bytes: Buffer): AllowedImageType | null {
 }
 
 /**
+ * Reads pixel dimensions from an image header without decoding it. Returns
+ * null when the header is missing or malformed, which the caller treats as a
+ * rejection: a file whose size cannot be read is not one worth scanning.
+ */
+export function readImageDimensions(
+  bytes: Buffer,
+  type: AllowedImageType
+): { width: number; height: number } | null {
+  if (type === "image/png") {
+    // The IHDR chunk always comes first: width and height at bytes 16 and 20.
+    if (bytes.length < 24 || bytes.toString("ascii", 12, 16) !== "IHDR") return null;
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+
+  if (type === "image/webp") {
+    if (bytes.length < 30) return null;
+    const chunk = bytes.toString("ascii", 12, 16);
+    if (chunk === "VP8X") {
+      // Extended format: 24-bit little-endian (width - 1) and (height - 1).
+      return { width: bytes.readUIntLE(24, 3) + 1, height: bytes.readUIntLE(27, 3) + 1 };
+    }
+    if (chunk === "VP8 ") {
+      // Lossy: a keyframe start code, then 14-bit width and height.
+      if (bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) return null;
+      return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+    }
+    if (chunk === "VP8L") {
+      // Lossless: a 0x2f signature, then 14-bit (width - 1) and (height - 1) packed.
+      if (bytes[20] !== 0x2f) return null;
+      const bits = bytes.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+    return null;
+  }
+
+  // JPEG: walk the marker segments until a start-of-frame, which holds the size.
+  let offset = 2;
+  while (offset + 4 <= bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1];
+    if (marker === 0xff) {
+      offset += 1; // fill byte
+      continue;
+    }
+    // Standalone markers carry no length field.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
+      offset += 2;
+      continue;
+    }
+    const length = bytes.readUInt16BE(offset + 2);
+    if (length < 2) return null;
+    // SOF0–SOF15, except DHT (C4), JPG (C8) and DAC (CC), which share the range.
+    const isFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isFrame) {
+      if (offset + 9 > bytes.length) return null;
+      return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) };
+    }
+    // Image data starts at SOS; a frame header after that would be malformed.
+    if (marker === 0xda || marker === 0xd9) return null;
+    offset += 2 + length;
+  }
+  return null;
+}
+
+/**
  * Turns an untrusted data URL into bytes, or into a reason to refuse it. The
  * reasons are safe to hand back to the caller — they describe the input, never
  * anything about the server.
@@ -82,6 +152,13 @@ export function parseImageDataUrl(dataUrl: unknown): ValidatedImage | { error: s
   if (sniffImageType(bytes) !== contentType) {
     return { error: "File content does not match its image type" };
   }
+
+  // Read from the header, not trusted from the caller, and checked against the
+  // same bounds the browser applies before it uploads.
+  const dimensions = readImageDimensions(bytes, contentType);
+  if (!dimensions) return { error: "Could not read the image dimensions." };
+  const sizeRejection = checkImageDimensions(dimensions.width, dimensions.height);
+  if (sizeRejection) return { error: sizeRejection };
 
   return { bytes, contentType };
 }

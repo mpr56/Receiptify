@@ -4,6 +4,7 @@ import {
   MAX_ITEM_NAME_CHARS,
   MAX_RECEIPT_AMOUNT,
   MAX_STORE_NAME_CHARS,
+  isReceiptVerdict,
   parseOcrResult,
 } from "./ocrSchema";
 
@@ -155,5 +156,23 @@ describe("parseOcrResult", () => {
       total: 0,
       items: 0,
     });
+  });
+});
+
+describe("isReceiptVerdict", () => {
+  test("accepts only a literal true", () => {
+    expect(isReceiptVerdict({ ...WELL_FORMED, isReceipt: true })).toBe(true);
+  });
+
+  test("rejects an explicit no", () => {
+    expect(isReceiptVerdict({ isReceipt: false })).toBe(false);
+  });
+
+  test("treats a missing or hedged verdict as no", () => {
+    expect(isReceiptVerdict(WELL_FORMED)).toBe(false);
+    expect(isReceiptVerdict({ isReceipt: "true" })).toBe(false);
+    expect(isReceiptVerdict({ isReceipt: 1 })).toBe(false);
+    expect(isReceiptVerdict(null)).toBe(false);
+    expect(isReceiptVerdict([{ isReceipt: true }])).toBe(false);
   });
 });
