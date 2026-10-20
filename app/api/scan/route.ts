@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { createClient } from "@/lib/supabase/server";
 import { parseImageDataUrl } from "@/lib/imageValidation";
-import { parseOcrResult } from "@/lib/ocrSchema";
+import { isReceiptVerdict, NOT_A_RECEIPT, parseOcrResult } from "@/lib/ocrSchema";
 import { readJsonBody } from "@/lib/requestBody";
 import { consumeScanQuota, SCANS_PER_HOUR } from "@/lib/scanQuota";
 
@@ -12,8 +12,13 @@ function getGroqClient() {
 
 const SYSTEM_PROMPT = `You are a receipt parser. Analyse the receipt image and return ONLY valid JSON, no markdown, no backticks, no explanation.
 
-Return this exact structure:
+First decide whether the image is a receipt: a printed or handwritten till receipt, tax invoice, or a screenshot or photo of a digital receipt or order confirmation showing a purchase total. Anything else (people, scenery, screenshots of other things, blank paper, documents that are not proof of purchase) is not a receipt.
+
+If it is NOT a receipt, return exactly {"isReceipt": false} and nothing else.
+
+If it IS a receipt, return this exact structure:
 {
+  "isReceipt": true,
   "storeName": "string, business name only in title case, no address or ABN",
   "date": "string, YYYY-MM-DD format, or empty string if not found",
   "time": "string, HH:MM in 24hr format, or empty string if not found",
@@ -114,6 +119,15 @@ export async function POST(req: NextRequest) {
     } catch {
       console.error("Scan API: model did not return JSON");
       return NextResponse.json({ error: "Could not read this receipt" }, { status: 502 });
+    }
+
+    // Folded into the parsing call rather than a separate one, so the check
+    // costs no extra latency or tokens. The quota is still spent: the model ran.
+    if (!isReceiptVerdict(raw)) {
+      return NextResponse.json(
+        { error: "That doesn't look like a receipt. Try another photo.", code: NOT_A_RECEIPT },
+        { status: 422 }
+      );
     }
 
     // The model read an image supplied by the caller, so its reply is untrusted

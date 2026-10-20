@@ -115,6 +115,8 @@ Defined in `lib/imageLimits.ts` and `lib/ocrSchema.ts`:
 | Upload types (server accepts) | `image/jpeg`, `image/png`, `image/webp` |
 | Picker types (browser offers) | the above + `image/heic`, `image/heif` |
 | Decoded image | 5MB |
+| Image dimensions (server, read from header) | short side ≥ 200px, long side ≥ 400px, no side > 4096px |
+| Source photo (browser, before scaling) | ≤ 60 megapixels |
 | Picked file, pre-compression | 15MB |
 | Request body | 8MB |
 | Scans per user per hour | 60 |
@@ -178,6 +180,28 @@ a caller-supplied data URL. `decodeDataUrl` and its regex are gone; don't
 reintroduce a second parse site.
 
 ---
+
+## Follow-up: receipt check and pixel limits
+
+**Is-it-a-receipt check is folded into the existing scan call.** The prompt
+asks the model for `"isReceipt"` first; `isReceiptVerdict` in
+`lib/ocrSchema.ts` accepts only a literal `true`, so a missing or hedged answer
+counts as "no". `/api/scan` then returns 422 with `code: "not_a_receipt"`, and
+the modal drops the image and returns to the photo step instead of falling
+through to manual entry. One call rather than two: no extra latency or tokens.
+The quota is still spent on a rejected image, because the model still ran.
+
+It catches honest mistakes, not attacks: text in the image can steer the
+verdict like any other field. `/api/receipts` does not re-check, since a user
+can key in any receipt by hand anyway and the bucket is private per user.
+
+**Pixel limits.** `parseImageDataUrl` reads width and height from the
+JPEG/PNG/WebP header (no decoding, no dependency) and applies
+`checkImageDimensions`. A header with no readable size is rejected. The floor
+is about legibility; the 4096px ceiling bounds vision-token spend per scan. The
+browser checks the source photo against a 60MP budget (it scales down itself)
+and its own output against the same rules as the server, because the
+landscape crop can push a borderline photo under the floor.
 
 ## Explicitly not done
 

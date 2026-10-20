@@ -32,6 +32,54 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** 15MB for the file as picked, before compression. Covers a modern phone photo. */
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
+/**
+ * Pixel bounds. A receipt is a narrow strip of small print, so the floor is
+ * about legibility: below 200px across or 400px long, line items blur into
+ * each other and the scan would only spend quota to return guesses.
+ */
+export const MIN_IMAGE_SHORT_SIDE = 200;
+export const MIN_IMAGE_LONG_SIDE = 400;
+
+/**
+ * Ceiling on what the server accepts. The browser never sends more than
+ * 1800px tall (see lib/imageProcessor.ts), so this is headroom for direct API
+ * callers, and it bounds the vision tokens a single scan can spend.
+ */
+export const MAX_IMAGE_SIDE = 4096;
+
+/**
+ * Ceiling on the picked photo before it is scaled down. 60MP clears a 48MP
+ * phone camera; anything beyond that is more likely a panorama or a
+ * decompression bomb than a receipt, and decoding it can exhaust a phone's
+ * memory before the canvas ever shrinks it.
+ */
+export const MAX_SOURCE_PIXELS = 60_000_000;
+
+/**
+ * Screens decoded dimensions. Returns a message to show the user, or null when
+ * the image is usable. `maxSide` defaults to the server ceiling; the browser
+ * passes Infinity for the source photo, which it scales down itself, and
+ * relies on `MAX_SOURCE_PIXELS` instead.
+ */
+export function checkImageDimensions(
+  width: number,
+  height: number,
+  { maxSide = MAX_IMAGE_SIDE, maxPixels = Infinity }: { maxSide?: number; maxPixels?: number } = {}
+): string | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return "Could not read the image dimensions.";
+  }
+  const short = Math.min(width, height);
+  const long = Math.max(width, height);
+  if (short < MIN_IMAGE_SHORT_SIDE || long < MIN_IMAGE_LONG_SIDE) {
+    return `That image is too small to read (${width}×${height}px). Use a photo at least ${MIN_IMAGE_SHORT_SIDE}×${MIN_IMAGE_LONG_SIDE}px.`;
+  }
+  if (long > maxSide || width * height > maxPixels) {
+    return `That image is too large (${width}×${height}px). Try a smaller photo.`;
+  }
+  return null;
+}
+
 export function isAllowedImageType(type: string): type is AllowedImageType {
   return (ALLOWED_IMAGE_TYPES as readonly string[]).includes(type);
 }

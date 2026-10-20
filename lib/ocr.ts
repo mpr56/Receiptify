@@ -1,8 +1,20 @@
 import { ProductCategory } from "@/types";
-import { parseOcrResult, type ScannedReceipt } from "@/lib/ocrSchema";
+import { NOT_A_RECEIPT, parseOcrResult, type ScannedReceipt } from "@/lib/ocrSchema";
 
 export interface OCRResult extends ScannedReceipt {
   category: ProductCategory;
+}
+
+/**
+ * The scan worked but the image is not a receipt. Kept apart from other scan
+ * failures because the image itself is the problem: falling through to manual
+ * entry would file the wrong photo against the receipt.
+ */
+export class NotAReceiptError extends Error {
+  constructor(message = "That doesn't look like a receipt. Try another photo.") {
+    super(message);
+    this.name = "NotAReceiptError";
+  }
 }
 
 // --- Category inference -------------------------------------------------------
@@ -43,6 +55,7 @@ export async function scanReceipt(
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
+    if (err.code === NOT_A_RECEIPT) throw new NotAReceiptError(err.error);
     throw new Error(err.error ?? "Scan failed");
   }
 
