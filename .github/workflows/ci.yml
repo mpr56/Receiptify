@@ -11,8 +11,7 @@ permissions:
   contents: read
 
 # A new push to the same PR supersedes the run in flight. Runs on main are
-# never cancelled: stopping one mid-way could leave a migration applied with
-# the matching deploy never shipped.
+# never cancelled, so every merge reaches production in order.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -125,35 +124,10 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
 
-  migrate:
-    name: Migrate database
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [ci]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: production
-    # One migration run at a time, and never cancelled part-way.
-    concurrency:
-      group: production-migrate
-      cancel-in-progress: false
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-      - run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_ID }}
-      # Before the deploy, so new code never reaches a database that is missing
-      # the tables or functions it calls (the scan quota fails closed without
-      # its function). Migrations must stay backwards compatible with the code
-      # already live, since it keeps serving until the deploy below finishes.
-      - run: supabase db push
-
   production:
     name: Deploy production
-    needs: [migrate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ci]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
